@@ -1,0 +1,332 @@
+{
+  "info": {
+    "name": "Bloomy Backend",
+    "description": "Postman collection for Bloomy backend integration.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000" },
+    { "key": "idToken", "value": "" },
+    { "key": "uid", "value": "" },
+    { "key": "habitId", "value": "" },
+    { "key": "cronSecret", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "GET /",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/", "host": ["{{baseUrl}}"], "path": [""] }
+          }
+        },
+        {
+          "name": "GET /api/health",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/health", "host": ["{{baseUrl}}"], "path": ["api", "health"] }
+          }
+        },
+        {
+          "name": "GET /api/docs",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/docs", "host": ["{{baseUrl}}"], "path": ["api", "docs"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "POST /api/auth/register",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"strongPassword123\",\n  \"display_name\": \"User Name\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/auth/register", "host": ["{{baseUrl}}"], "path": ["api", "auth", "register"] }
+          }
+        },
+        {
+          "name": "POST /api/auth/login (demo)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"strongPassword123\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/auth/login", "host": ["{{baseUrl}}"], "path": ["api", "auth", "login"] }
+          }
+        },
+        {
+          "name": "POST /api/auth/logout",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/auth/logout", "host": ["{{baseUrl}}"], "path": ["api", "auth", "logout"] }
+          }
+        },
+        {
+          "name": "POST /api/auth/verify-token",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id_token\": \"{{idToken}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/auth/verify-token", "host": ["{{baseUrl}}"], "path": ["api", "auth", "verify-token"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Users (Auth Required)",
+      "item": [
+        {
+          "name": "GET /api/users/:uid",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{idToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/api/users/{{uid}}", "host": ["{{baseUrl}}"], "path": ["api", "users", "{{uid}}"] }
+          }
+        },
+        {
+          "name": "PUT /api/users/:uid",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{idToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"display_name\": \"Updated Name\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/users/{{uid}}", "host": ["{{baseUrl}}"], "path": ["api", "users", "{{uid}}"] }
+          }
+        },
+        {
+          "name": "GET /api/users/:uid/stats",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{idToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/api/users/{{uid}}/stats", "host": ["{{baseUrl}}"], "path": ["api", "users", "{{uid}}", "stats"] }
+          }
+        },
+        {
+          "name": "DELETE /api/users/:uid/delete",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{idToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/api/users/{{uid}}/delete", "host": ["{{baseUrl}}"], "path": ["api", "users", "{{uid}}", "delete"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Habits",
+      "item": [
+        {
+          "name": "POST /api/habits (Auth Required)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{idToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Drink water\",\n  \"frequency\": \"daily\",\n  \"description\": \"2L target\",\n  \"icon\": \"💧\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/habits", "host": ["{{baseUrl}}"], "path": ["api", "habits"] }
+          }
+        },
+        {
+          "name": "GET /api/habits/:habitId",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/habits/{{habitId}}", "host": ["{{baseUrl}}"], "path": ["api", "habits", "{{habitId}}"] }
+          }
+        },
+        {
+          "name": "GET /api/habits/user/:uid (Auth Required)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{idToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/api/habits/user/{{uid}}", "host": ["{{baseUrl}}"], "path": ["api", "habits", "user", "{{uid}}"] }
+          }
+        },
+        {
+          "name": "GET /api/habits/user/:uid/recommendations?limit=6 (Auth Required)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{idToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/habits/user/{{uid}}/recommendations?limit=6",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "habits", "user", "{{uid}}", "recommendations"],
+              "query": [
+                { "key": "limit", "value": "6" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "PUT /api/habits/:habitId (Auth Required)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{idToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Drink more water\",\n  \"frequency\": \"daily\",\n  \"description\": \"2.5L target\",\n  \"icon\": \"💦\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/habits/{{habitId}}", "host": ["{{baseUrl}}"], "path": ["api", "habits", "{{habitId}}"] }
+          }
+        },
+        {
+          "name": "DELETE /api/habits/:habitId (Auth Required)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{idToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/api/habits/{{habitId}}", "host": ["{{baseUrl}}"], "path": ["api", "habits", "{{habitId}}"] }
+          }
+        },
+        {
+          "name": "POST /api/habits/:habitId/complete (Auth Required)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{idToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"image_url\": \"\",\n  \"notes\": \"done\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/habits/{{habitId}}/complete", "host": ["{{baseUrl}}"], "path": ["api", "habits", "{{habitId}}", "complete"] }
+          }
+        },
+        {
+          "name": "GET /api/habits/:habitId/streak?uid=:uid (Auth Required)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{idToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/habits/{{habitId}}/streak?uid={{uid}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "habits", "{{habitId}}", "streak"],
+              "query": [
+                { "key": "uid", "value": "{{uid}}" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "POST /api/habits/:habitId/reset-streak (Auth Required)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{idToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/api/habits/{{habitId}}/reset-streak", "host": ["{{baseUrl}}"], "path": ["api", "habits", "{{habitId}}", "reset-streak"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Plants",
+      "item": [
+        {
+          "name": "GET /api/plants/:uid (Auth Required)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{idToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/api/plants/{{uid}}", "host": ["{{baseUrl}}"], "path": ["api", "plants", "{{uid}}"] }
+          }
+        },
+        {
+          "name": "GET /api/plants/:uid/health (Auth Required)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{idToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/api/plants/{{uid}}/health", "host": ["{{baseUrl}}"], "path": ["api", "plants", "{{uid}}", "health"] }
+          }
+        },
+        {
+          "name": "PUT /api/plants/:uid/health (Auth Required)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{idToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"health_change\": 5\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/plants/{{uid}}/health", "host": ["{{baseUrl}}"], "path": ["api", "plants", "{{uid}}", "health"] }
+          }
+        },
+        {
+          "name": "POST /api/plants/:uid/decay-check (Auth Required)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{idToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/api/plants/{{uid}}/decay-check", "host": ["{{baseUrl}}"], "path": ["api", "plants", "{{uid}}", "decay-check"] }
+          }
+        },
+        {
+          "name": "POST /api/plants/batch-decay",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Cron-Secret", "value": "{{cronSecret}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_ids\": [\"{{uid}}\"]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/plants/batch-decay", "host": ["{{baseUrl}}"], "path": ["api", "plants", "batch-decay"] }
+          }
+        }
+      ]
+    }
+  ]
+}
