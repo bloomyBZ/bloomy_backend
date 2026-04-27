@@ -294,3 +294,87 @@ class StreakRepository(BaseRepository):
         })
 
         return self.get_streak(user_id, habit_id)
+
+
+class TrashRepository(BaseRepository):
+    """Trash management for deleted items (undo functionality)"""
+
+    def __init__(self):
+        super().__init__(FIRESTORE_COLLECTIONS['trash'])
+
+    def trash_habit(self, habit_id: str, habit_data: Dict[str, Any]) -> bool:
+        """Move a habit to trash (for undo functionality)"""
+        try:
+            trash_id = f"habit_{habit_id}"
+            trash_entry = {
+                'original_id': habit_id,
+                'item_type': 'habit',
+                'data': habit_data,
+                'deleted_at': datetime.utcnow().isoformat(),
+                'user_id': habit_data.get('user_id'),
+                'expires_at': (datetime.utcnow() + timedelta(hours=24)).isoformat()  # Auto-delete after 24 hours
+            }
+            return self.create(trash_id, trash_entry)
+        except Exception as e:
+            print(f"Error trashing habit: {e}")
+            return False
+
+    def restore_habit(self, habit_id: str) -> Optional[Dict]:
+        """Restore a habit from trash"""
+        try:
+            trash_id = f"habit_{habit_id}"
+            trash_data = self.get(trash_id)
+            
+            if not trash_data:
+                return None
+
+            # Check if trash item has expired
+            expires_at = datetime.fromisoformat(trash_data['expires_at'])
+            if datetime.utcnow() > expires_at:
+                # Delete expired trash
+                self.delete(trash_id)
+                return None
+
+            # Restore the habit
+            habit_data = trash_data['data']
+            habit_repo = HabitRepository()
+            
+            if habit_repo.create(habit_id, habit_data):
+                # Remove from trash
+                self.delete(trash_id)
+                return habit_data
+            
+            return None
+        except Exception as e:
+            print(f"Error restoring habit: {e}")
+            return None
+
+    def get_user_trash(self, user_id: str) -> List[Dict]:
+        """Get all trashed items for a user"""
+        try:
+            trash_items = self.query_by_field('user_id', user_id)
+            # Filter out expired items
+            valid_items = []
+            for item in trash_items:
+                expires_at = datetime.fromisoformat(item['expires_at'])
+                if datetime.utcnow() <= expires_at:
+                    valid_items.append(item)
+                else:
+                    # Clean up expired items
+                    self.delete(item.get('original_id', ''))
+            return valid_items
+        except Exception as e:
+            print(f"Error getting user trash: {e}")
+            return []
+
+    def empty_trash(self, user_id: str) -> bool:
+        """Permanently delete all trash for a user"""
+        try:
+            trash_items = self.query_by_field('user_id', user_id)
+            for item in trash_items:
+                trash_id = f"habit_{item.get('original_id', '')}"
+                self.delete(trash_id)
+            return True
+        except Exception as e:
+            print(f"Error emptying trash: {e}")
+            return False

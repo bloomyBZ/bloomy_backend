@@ -5,13 +5,14 @@ API Routes for Habit Management
 from functools import wraps
 from flask import Blueprint, request, jsonify
 from firebase_admin import auth
-from repositories.repositories import HabitRepository, StreakRepository
+from repositories.repositories import HabitRepository, StreakRepository, TrashRepository
 from services.services import ScoringService, StreakService, AIService
 
 habit_bp = Blueprint('habits', __name__, url_prefix='/api/habits')
 
 habit_repo = HabitRepository()
 streak_repo = StreakRepository()
+trash_repo = TrashRepository()
 scoring_service = ScoringService()
 streak_service = StreakService()
 ai_service = AIService()
@@ -155,19 +156,93 @@ def update_habit(uid, habit_id):
 @habit_bp.route('/<habit_id>', methods=['DELETE'])
 @verify_token
 def delete_habit(uid, habit_id):
-    """Delete a habit"""
+    """Delete a habit (moves to trash for undo)"""
     try:
         habit = habit_repo.get_habit(habit_id)
         if not habit or habit.user_id != uid:
             return jsonify({'error': 'Habit not found'}), 404
 
-        if habit_repo.delete(habit_id):
-            return jsonify({'message': 'Habit deleted successfully'}), 200
-        else:
-            return jsonify({'error': 'Failed to delete habit'}), 500
+        # Move habit to trash instead of permanent delete
+        habit_data = habit.to_dict()
+        if trash_repo.trash_habit(habit_id, habit_data):
+            # Remove from active habits
+            if habit_repo.delete(habit_id):
+                return jsonify({
+                    'message': 'Habit deleted successfully',
+                    'habit_id': habit_id,
+                    'undo_available': True
+                }), 200
+        
+        return jsonify({'error': 'Failed to delete habit'}), 500
 
     except Exception as e:
         return jsonify({'error': f'Deletion failed: {str(e)}'}), 500
+
+
+@habit_bp.route('/<habit_id>/undo', methods=['POST'])
+@verify_token
+def undo_delete_habit(uid, habit_id):
+    """Undo the deletion of a habit"""
+    try:
+        # Restore habit from trash
+        habit_data = trash_repo.restore_habit(habit_id)
+        
+        if habit_data:
+            # Verify that the restored habit belongs to the user
+            if habit_data.get('user_id') != uid:
+                return jsonify({'error': 'Unauthorized'}), 403
+            
+            # Re-initialize streak for restored habit
+            streak_repo.create_streak(uid, habit_id)
+            
+            return jsonify({
+                'message': 'Habit restored successfully',
+                'habit_id': habit_id,
+                'habit': habit_data
+            }), 200
+        else:
+            return jsonify({'error': 'Cannot restore habit - it may have expired or already been restored'}), 404
+
+    except Exception as e:
+        return jsonify({'error': f'Restore failed: {str(e)}'}), 500
+
+
+# ============== Trash/Undo Management Routes ==============
+
+@habit_bp.route('/user/<uid>/trash', methods=['GET'])
+@verify_token
+def get_user_trash(auth_uid, uid):
+    """Get all deleted habits in trash for a user"""
+    try:
+        if auth_uid != uid:
+            return jsonify({'error': 'Unauthorized'}), 403
+
+        trash_items = trash_repo.get_user_trash(uid)
+        
+        return jsonify({
+            'trash': trash_items,
+            'count': len(trash_items)
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': f'Failed to fetch trash: {str(e)}'}), 500
+
+
+@habit_bp.route('/user/<uid>/trash', methods=['DELETE'])
+@verify_token
+def empty_trash(auth_uid, uid):
+    """Permanently delete all items in trash"""
+    try:
+        if auth_uid != uid:
+            return jsonify({'error': 'Unauthorized'}), 403
+
+        if trash_repo.empty_trash(uid):
+            return jsonify({'message': 'Trash emptied successfully'}), 200
+        else:
+            return jsonify({'error': 'Failed to empty trash'}), 500
+
+    except Exception as e:
+        return jsonify({'error': f'Failed to empty trash: {str(e)}'}), 500
 
 
 # ============== Habit Completion Routes ==============

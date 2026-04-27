@@ -45,6 +45,7 @@ FIRESTORE_COLLECTIONS = {
     'plants': 'plants',
     'logs': 'logs',
     'streaks': 'streaks',
+    'trash': 'trash',  # For tracking deleted habits for undo functionality
 }
 
 # Application configuration
