@@ -26,6 +26,8 @@ class User:
     uid: str
     email: str
     display_name: str
+    avatar_id: str = "sprout"
+    hydration_habit_dismissed: bool = False
     total_points: int = 0
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
@@ -44,12 +46,17 @@ class Habit:
     user_id: str
     name: str
     frequency: str  # "daily", "weekly", "custom"
+    schedule: str = ""
+    category: str = ""
+    source: str = ""
     streak_count: int = 0
     last_completed_at: Optional[datetime] = None
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
     description: str = ""
     icon: str = "📍"
+    water_intake: int = 0
+    water_date: str = ""
 
     def to_dict(self):
         """Convert to Firestore-compatible dict"""

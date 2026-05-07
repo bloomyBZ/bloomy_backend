@@ -4,6 +4,7 @@ Repository Layer - Database Operations for Firestore
 
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
+import re
 import uuid
 from config.firebase_config import get_firestore_client, FIRESTORE_COLLECTIONS
 from models.models import User, Habit, Plant, HabitLog, Streak
@@ -66,12 +67,13 @@ class UserRepository(BaseRepository):
     def __init__(self):
         super().__init__(FIRESTORE_COLLECTIONS['users'])
 
-    def create_user(self, uid: str, email: str, display_name: str) -> bool:
+    def create_user(self, uid: str, email: str, display_name: str, avatar_id: str = "sprout") -> bool:
         """Create a new user"""
         user = User(
             uid=uid,
             email=email,
-            display_name=display_name
+            display_name=display_name,
+            avatar_id=avatar_id
         )
         return self.create(uid, user.to_dict())
 
@@ -98,13 +100,48 @@ class UserRepository(BaseRepository):
             print(f"Error updating user points: {e}")
         return False
 
+    def set_hydration_habit_dismissed(self, uid: str, dismissed: bool) -> bool:
+        """Persist whether the default hydration habit should be auto-created."""
+        return self.update(uid, {
+            'hydration_habit_dismissed': dismissed,
+            'updated_at': datetime.utcnow().isoformat(),
+        })
+
 class HabitRepository(BaseRepository):
     """Habit database operations"""
+
+    DEFAULT_WATER_CUPS = 2
+    WATER_GOAL = 7
+    DEFAULT_WATER_NAME = "Daily water tracking"
+    DEFAULT_WATER_DESCRIPTION = "Stay hydrated throughout the day and keep your body refreshed."
+    DEFAULT_WATER_ICON = "💧"
+    HYDRATION_TRACKER_PATTERNS = (
+        "water tracking",
+        "water tracker",
+        "water log",
+        "hydration tracking",
+        "hydration tracker",
+        "hydration log",
+        "su takibi",
+        "su takip",
+    )
 
     def __init__(self):
         super().__init__(FIRESTORE_COLLECTIONS['habits'])
 
-    def create_habit(self, user_id: str, name: str, frequency: str, description: str = "", icon: str = "📍") -> Optional[str]:
+    def create_habit(
+        self,
+        user_id: str,
+        name: str,
+        frequency: str,
+        schedule: str = "",
+        category: str = "",
+        source: str = "",
+        description: str = "",
+        icon: str = "📍",
+        water_intake: int = 0,
+        water_date: str = "",
+    ) -> Optional[str]:
         """Create a new habit"""
         habit_id = str(uuid.uuid4())
         habit = Habit(
@@ -112,12 +149,55 @@ class HabitRepository(BaseRepository):
             user_id=user_id,
             name=name,
             frequency=frequency,
+            schedule=schedule,
+            category=category,
+            source=source,
             description=description,
-            icon=icon
+            icon=icon,
+            water_intake=water_intake,
+            water_date=water_date,
         )
         if self.create(habit_id, habit.to_dict()):
             return habit_id
         return None
+
+    @staticmethod
+    def _normalize_habit_name(value: str) -> str:
+        """Normalize habit names for keyword matching."""
+        return re.sub(r"\s+", " ", (value or "").strip().lower())
+
+    def is_hydration_habit(self, name: str = "", description: str = "", icon: str = "") -> bool:
+        """Only treat explicit water-tracking habits as hydration trackers."""
+        normalized_name = self._normalize_habit_name(name)
+
+        return any(
+            pattern in normalized_name
+            for pattern in self.HYDRATION_TRACKER_PATTERNS
+        )
+
+    def ensure_default_water_habit(self, user_id: str) -> Optional[str]:
+        """Ensure each user has a non-removable default hydration habit."""
+        habits = self.query_by_field('user_id', user_id)
+        for habit in habits:
+            if self.is_hydration_habit(
+                habit.get('name', ''),
+                habit.get('description', ''),
+                habit.get('icon', ''),
+            ):
+                return None
+
+        return self.create_habit(
+            user_id=user_id,
+            name=self.DEFAULT_WATER_NAME,
+            frequency='daily',
+            schedule='Throughout the day',
+            category='Health',
+            source='system',
+            description=self.DEFAULT_WATER_DESCRIPTION,
+            icon=self.DEFAULT_WATER_ICON,
+            water_intake=self.DEFAULT_WATER_CUPS,
+            water_date=datetime.utcnow().date().isoformat(),
+        )
 
     def get_habit(self, habit_id: str) -> Optional[Habit]:
         """Get habit by ID"""
@@ -146,6 +226,35 @@ class HabitRepository(BaseRepository):
             'streak_count': new_streak,
             'last_completed_at': datetime.utcnow().isoformat(),
             'updated_at': datetime.utcnow().isoformat()
+        })
+
+    def set_completion_metadata(
+        self,
+        habit_id: str,
+        streak_count: Optional[int] = None,
+        last_completed_at: Optional[datetime] = None,
+    ) -> bool:
+        """Set habit completion fields explicitly."""
+        payload: Dict[str, Any] = {
+            'updated_at': datetime.utcnow().isoformat(),
+        }
+
+        if streak_count is not None:
+            payload['streak_count'] = max(0, streak_count)
+
+        payload['last_completed_at'] = (
+            last_completed_at.isoformat() if last_completed_at else None
+        )
+
+        return self.update(habit_id, payload)
+
+    def update_water_intake(self, habit_id: str, water_intake: int, water_date: Optional[str] = None) -> bool:
+        """Persist water intake for hydration habits."""
+        safe_cups = max(0, min(self.WATER_GOAL, water_intake))
+        return self.update(habit_id, {
+            'water_intake': safe_cups,
+            'water_date': water_date or datetime.utcnow().date().isoformat(),
+            'updated_at': datetime.utcnow().isoformat(),
         })
 
 class PlantRepository(BaseRepository):
@@ -241,6 +350,22 @@ class HabitLogRepository(BaseRepository):
             logs.append(HabitLog(**data))
         return logs
 
+    def get_latest_habit_log(self, habit_id: str) -> Optional[HabitLog]:
+        """Get the most recent log for a habit."""
+        logs = self.get_habit_logs(habit_id, limit=1000)
+        if not logs:
+            return None
+
+        return max(logs, key=lambda log: log.timestamp)
+
+    def delete_logs_for_habit(self, habit_id: str) -> int:
+        """Delete all logs that belong to a habit."""
+        deleted_count = 0
+        for log in self.get_habit_logs(habit_id, limit=1000):
+            if self.delete(log.log_id):
+                deleted_count += 1
+        return deleted_count
+
     def get_logs_since(self, user_id: str, hours: int = 24) -> List[HabitLog]:
         """Get logs from the last N hours"""
         cutoff_time = datetime.utcnow() - timedelta(hours=hours)
@@ -294,6 +419,10 @@ class StreakRepository(BaseRepository):
         })
 
         return self.get_streak(user_id, habit_id)
+
+    def delete_streak(self, user_id: str, habit_id: str) -> bool:
+        """Delete the streak tracker for a habit."""
+        return self.delete(f"{user_id}_{habit_id}")
 
 
 class TrashRepository(BaseRepository):

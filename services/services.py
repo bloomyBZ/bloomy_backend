@@ -22,6 +22,7 @@ class ScoringService:
     BASE_POINTS = 10
     STREAK_MULTIPLIER = 1.5
     STREAK_THRESHOLD = 3  # Days in a row
+    WATER_GOAL = 7
 
     def __init__(self):
         self.user_repo = UserRepository()
@@ -40,8 +41,12 @@ class ScoringService:
             if not habit or habit.user_id != user_id:
                 return False, 0, {"error": "Habit not found"}
 
+            if self._completed_today(habit.last_completed_at):
+                return False, 0, {"error": "Habit already completed today"}
+
             # Update streak
             streak = self.streak_repo.update_streak(user_id, habit_id)
+            self.habit_repo.update_habit_streak(habit_id, streak.current_streak)
 
             # Calculate points with streak bonus
             points = self._calculate_points(streak.current_streak)
@@ -62,6 +67,13 @@ class ScoringService:
             plant_health_increase = self._calculate_plant_health_bonus(points)
             self.plant_repo.update_plant_health(user_id, plant_health_increase)
 
+            if self.habit_repo.is_hydration_habit(habit.name, habit.description, habit.icon):
+                self.habit_repo.update_water_intake(
+                    habit_id,
+                    self.WATER_GOAL,
+                    datetime.utcnow().date().isoformat(),
+                )
+
             return True, points, {
                 "log_id": log_id,
                 "points_earned": points,
@@ -72,6 +84,116 @@ class ScoringService:
         except Exception as e:
             print(f"Error completing habit: {e}")
             return False, 0, {"error": str(e)}
+
+    def uncomplete_habit(self, user_id: str, habit_id: str) -> Tuple[bool, int, dict]:
+        """Undo today's completion for a habit."""
+        try:
+            habit = self.habit_repo.get_habit(habit_id)
+            if not habit or habit.user_id != user_id:
+                return False, 0, {"error": "Habit not found"}
+
+            if not self._completed_today(habit.last_completed_at):
+                return False, 0, {"error": "Habit is not completed today"}
+
+            habit_logs = [
+                log
+                for log in self.log_repo.get_habit_logs(habit_id, limit=1000)
+                if log.user_id == user_id
+            ]
+            today = datetime.utcnow().date()
+            today_logs = [log for log in habit_logs if log.timestamp.date() == today]
+
+            if not today_logs:
+                return False, 0, {"error": "No completion log found for today"}
+
+            points_removed = sum(log.points_earned for log in today_logs)
+            plant_health_removed = sum(
+                self._calculate_plant_health_bonus(log.points_earned)
+                for log in today_logs
+            )
+
+            for log in today_logs:
+                self.log_repo.delete(log.log_id)
+
+            if points_removed:
+                self.user_repo.update_user_points(user_id, -points_removed)
+            if plant_health_removed:
+                self.plant_repo.update_plant_health(user_id, -plant_health_removed)
+
+            streak = self.streak_repo.get_streak(user_id, habit_id)
+            next_streak = max(0, (streak.current_streak if streak else 0) - 1)
+            if streak:
+                self.streak_repo.update(
+                    streak.streak_id,
+                    {
+                        'current_streak': next_streak,
+                        'updated_at': datetime.utcnow().isoformat(),
+                    }
+                )
+
+            remaining_logs = [
+                log
+                for log in self.log_repo.get_habit_logs(habit_id, limit=1000)
+                if log.user_id == user_id
+            ]
+            latest_remaining_log = (
+                max(remaining_logs, key=lambda log: log.timestamp)
+                if remaining_logs
+                else None
+            )
+            self.habit_repo.set_completion_metadata(
+                habit_id,
+                streak_count=next_streak,
+                last_completed_at=latest_remaining_log.timestamp if latest_remaining_log else None,
+            )
+
+            if self.habit_repo.is_hydration_habit(habit.name, habit.description, habit.icon):
+                self.habit_repo.update_water_intake(
+                    habit_id,
+                    self.habit_repo.DEFAULT_WATER_CUPS,
+                    datetime.utcnow().date().isoformat(),
+                )
+
+            return True, points_removed, {
+                "points_removed": points_removed,
+                "current_streak": next_streak,
+                "multiplier_reversed": points_removed > self.BASE_POINTS,
+            }
+        except Exception as e:
+            print(f"Error uncompleting habit: {e}")
+            return False, 0, {"error": str(e)}
+
+    def remove_habit_progress(self, user_id: str, habit_id: str) -> dict:
+        """Reverse points and clean up logs/streak when a habit is deleted."""
+        try:
+            logs = [
+                log
+                for log in self.log_repo.get_habit_logs(habit_id, limit=1000)
+                if log.user_id == user_id
+            ]
+            total_points = sum(log.points_earned for log in logs)
+            total_health = sum(self._calculate_plant_health_bonus(log.points_earned) for log in logs)
+
+            if total_points:
+                self.user_repo.update_user_points(user_id, -total_points)
+            if total_health:
+                self.plant_repo.update_plant_health(user_id, -total_health)
+
+            deleted_logs = self.log_repo.delete_logs_for_habit(habit_id)
+            self.streak_repo.delete_streak(user_id, habit_id)
+
+            return {
+                "points_removed": total_points,
+                "logs_removed": deleted_logs,
+                "plant_health_removed": total_health,
+            }
+        except Exception as e:
+            print(f"Error removing habit progress: {e}")
+            return {
+                "points_removed": 0,
+                "logs_removed": 0,
+                "plant_health_removed": 0,
+            }
 
     def _calculate_points(self, current_streak: int) -> int:
         """Calculate points based on streak"""
@@ -84,6 +206,14 @@ class ScoringService:
         """Convert points to plant health increase"""
         # 10 points = 5 health points
         return max(1, points // 2)
+
+    def _completed_today(self, completed_at: Optional[datetime]) -> bool:
+        """Check whether the habit has already been completed today."""
+        if not completed_at:
+            return False
+
+        completed_date = completed_at.date()
+        return completed_date == datetime.utcnow().date()
 
 
 class PlantDecayService:
@@ -213,37 +343,37 @@ class AIService:
 
     CATEGORY_RECOMMENDATIONS = {
         "wellness": [
-            {"name": "Günde 2L su iç", "frequency": "daily", "description": "Gün içinde düzenli su tüketimini takip et.", "icon": "💧", "reason": "Sağlık alışkanlıklarını destekler."},
-            {"name": "Uyumadan 30 dk önce ekran kapat", "frequency": "daily", "description": "Uyku kalitesini artırmak için mavi ışığı azalt.", "icon": "🌙", "reason": "Daha kaliteli uyku rutini oluşturur."},
-            {"name": "Sabah 5 dk nefes egzersizi", "frequency": "daily", "description": "Güne sakin ve odaklı başlamak için nefes pratiği yap.", "icon": "🫁", "reason": "Stresi azaltmaya yardımcı olur."},
+            {"name": "Drink 2L of water", "frequency": "daily", "description": "Track steady water intake across the day.", "icon": "💧", "reason": "Supports a simple and sustainable health routine."},
+            {"name": "Turn off screens 30 min before sleep", "frequency": "daily", "description": "Reduce late-night blue light to support better rest.", "icon": "🌙", "reason": "Helps build a calmer sleep routine."},
+            {"name": "5 min breathing exercise", "frequency": "daily", "description": "Start the day with a short breathing reset.", "icon": "🫁", "reason": "Can lower stress and improve focus."},
         ],
         "fitness": [
-            {"name": "Antrenman sonrası 10 dk esneme", "frequency": "daily", "description": "Kasları rahatlatmak için kısa esneme rutini uygula.", "icon": "🤸", "reason": "Egzersiz verimini artırır."},
-            {"name": "Günde 8.000 adım hedefi", "frequency": "daily", "description": "Günlük hareket miktarını artırmak için adım hedefi koy.", "icon": "👟", "reason": "Aktif yaşam alışkanlığını güçlendirir."},
-            {"name": "Haftada 2 gün kuvvet antrenmanı", "frequency": "weekly", "description": "Denge ve güç için düzenli kuvvet çalışması yap.", "icon": "🏋️", "reason": "Fiziksel dayanıklılığı destekler."},
+            {"name": "10 min stretch after workouts", "frequency": "daily", "description": "Use a short stretching block to recover more smoothly.", "icon": "🤸", "reason": "Supports recovery and movement quality."},
+            {"name": "8,000 steps a day", "frequency": "daily", "description": "Set a simple step target to stay active every day.", "icon": "👟", "reason": "Strengthens a steady movement routine."},
+            {"name": "Strength training twice a week", "frequency": "weekly", "description": "Add regular strength sessions for balance and resilience.", "icon": "🏋️", "reason": "Supports long-term physical capacity."},
         ],
         "learning": [
-            {"name": "Her gün 10 sayfa oku", "frequency": "daily", "description": "Günlük mini okuma hedefi ile öğrenmeyi sürdür.", "icon": "📚", "reason": "Öğrenme zincirini devam ettirir."},
-            {"name": "Günde 15 dk yabancı dil", "frequency": "daily", "description": "Kısa ama düzenli dil pratiği yap.", "icon": "🗣️", "reason": "Dil gelişimini istikrarlı hale getirir."},
-            {"name": "Haftalık öğrenme özeti yaz", "frequency": "weekly", "description": "Hafta boyunca öğrendiklerini not alıp pekiştir.", "icon": "📝", "reason": "Bilgiyi kalıcı hale getirir."},
+            {"name": "Read 10 pages a day", "frequency": "daily", "description": "Keep learning moving with a small daily reading target.", "icon": "📚", "reason": "Makes learning easier to repeat consistently."},
+            {"name": "15 min language practice", "frequency": "daily", "description": "Do a short but regular language session each day.", "icon": "🗣️", "reason": "Builds skill through steady repetition."},
+            {"name": "Write a weekly learning recap", "frequency": "weekly", "description": "Summarize what you learned during the week.", "icon": "📝", "reason": "Helps ideas stick more deeply."},
         ],
         "productivity": [
-            {"name": "Güne 3 öncelik yazarak başla", "frequency": "daily", "description": "Her sabah en önemli 3 işi netleştir.", "icon": "🎯", "reason": "Odak dağınıklığını azaltır."},
-            {"name": "Pomodoro ile 25 dk odak", "frequency": "daily", "description": "Kısa odak seansları ile üretkenliği artır.", "icon": "⏱️", "reason": "Dikkat süresini güçlendirir."},
-            {"name": "Akşam 5 dk ertesi gün planı", "frequency": "daily", "description": "Ertesi gün için kısa bir plan oluştur.", "icon": "📅", "reason": "Günü daha kontrollü başlatmanı sağlar."},
+            {"name": "Start the day with 3 priorities", "frequency": "daily", "description": "Define the three tasks that matter most each morning.", "icon": "🎯", "reason": "Reduces scattered attention and decision fatigue."},
+            {"name": "25 min focus with Pomodoro", "frequency": "daily", "description": "Use short focus rounds to increase consistent output.", "icon": "⏱️", "reason": "Strengthens focus in manageable sessions."},
+            {"name": "5 min next-day plan", "frequency": "daily", "description": "Set up tomorrow with a quick plan in the evening.", "icon": "📅", "reason": "Makes the next day feel clearer and lighter."},
         ],
         "mindfulness": [
-            {"name": "Günlük 3 minnet notu", "frequency": "daily", "description": "Her gün şükrettiğin 3 şeyi not et.", "icon": "🙏", "reason": "Pozitif farkındalığı artırır."},
-            {"name": "Akşam 5 dk duygu günlüğü", "frequency": "daily", "description": "Günün sonunda duygularını kısa notlarla takip et.", "icon": "💬", "reason": "Duygusal farkındalığı destekler."},
-            {"name": "Haftada 1 dijital detoks saati", "frequency": "weekly", "description": "Ekransız bir saat ile zihinsel boşluk yarat.", "icon": "📵", "reason": "Zihinsel yorgunluğu azaltır."},
+            {"name": "3 gratitude notes a day", "frequency": "daily", "description": "Write down three things you appreciate each day.", "icon": "🙏", "reason": "Builds a lighter and more positive mindset."},
+            {"name": "5 min evening journal", "frequency": "daily", "description": "Use a short end-of-day note to process your thoughts.", "icon": "💬", "reason": "Supports emotional clarity and reflection."},
+            {"name": "1 digital detox hour a week", "frequency": "weekly", "description": "Create one screen-free hour for mental breathing room.", "icon": "📵", "reason": "Helps reduce mental fatigue and noise."},
         ],
     }
 
     DEFAULT_RECOMMENDATIONS = [
-        {"name": "Günde 10 dk yürüyüş", "frequency": "daily", "description": "Kısa bir yürüyüşle aktif kal.", "icon": "🚶", "reason": "Başlangıç için sürdürülebilir bir alışkanlıktır."},
-        {"name": "Günlük su takibi", "frequency": "daily", "description": "Gün içinde su içmeyi işaretle.", "icon": "💧", "reason": "Temel sağlık rutini oluşturur."},
-        {"name": "Günde 10 sayfa kitap", "frequency": "daily", "description": "Küçük adımlarla okuma alışkanlığı edin.", "icon": "📖", "reason": "Öğrenme ivmesini artırır."},
-        {"name": "Uyumadan önce 5 dk plan", "frequency": "daily", "description": "Ertesi günün ilk adımlarını yaz.", "icon": "🗂️", "reason": "Daha düzenli bir gün başlangıcı sağlar."},
+        {"name": "10 min daily walk", "frequency": "daily", "description": "Stay active with a short walk you can repeat easily.", "icon": "🚶", "reason": "A simple habit that is easy to maintain."},
+        {"name": "Daily water tracking", "frequency": "daily", "description": "Keep an eye on hydration throughout the day.", "icon": "💧", "reason": "Builds a dependable baseline health routine."},
+        {"name": "Read 10 pages a day", "frequency": "daily", "description": "Grow a reading habit through small daily steps.", "icon": "📖", "reason": "Creates steady learning momentum."},
+        {"name": "5 min plan before sleep", "frequency": "daily", "description": "Map out tomorrow's first steps before bed.", "icon": "🗂️", "reason": "Makes the next day feel more organized."},
     ]
 
     def _is_gemini_available(self) -> bool:
@@ -562,11 +692,12 @@ class AIService:
 
             if self._is_gemini_available():
                 prompt = (
-                    "Kullanicinin mevcut aliskanliklarina gore yeni aliskanlik onerileri uret. "
-                    "Sadece JSON array don. Her oge su anahtarlari icersin: "
+                    "Generate new habit recommendations based on the user's current habits. "
+                    "Return ONLY a JSON array. Each item must include these keys: "
                     "name, frequency (daily|weekly|custom), description, icon, reason. "
-                    "Mevcut aliskanliklari tekrar etme. En fazla 10 tane don.\n"
-                    f"Mevcut aliskanliklar: {json.dumps(existing_names, ensure_ascii=False)}"
+                    "Write every field in English. Do not repeat existing habits. "
+                    "Return at most 10 items.\n"
+                    f"Existing habits: {json.dumps(existing_names, ensure_ascii=False)}"
                 )
                 content = self._generate_with_gemini(prompt, temperature=0.6, max_output_tokens=700)
                 ai_recommendations = self._extract_json_array(content)
@@ -622,13 +753,16 @@ class AIService:
             if normalized_name in existing_names or normalized_name in seen_names:
                 continue
 
+            if self._looks_turkish_text(f"{name} {description} {reason}"):
+                continue
+
             seen_names.add(normalized_name)
             output.append({
                 "name": name,
                 "frequency": frequency,
                 "description": description,
                 "icon": icon,
-                "reason": reason if reason else "Mevcut alışkanlıklarına göre önerildi.",
+                "reason": reason if reason else "Recommended based on your current habits.",
                 "confidence_score": self._estimate_confidence({"frequency": frequency}, ["ai"])
             })
 
@@ -725,6 +859,21 @@ class AIService:
         if candidate.get("frequency") == "daily":
             return 0.85
         return 0.75
+
+    def _looks_turkish_text(self, text: str) -> bool:
+        """Detect Turkish recommendation text so we can fall back to English-safe items."""
+        normalized = self._normalize_text(text)
+        if re.search(r"[çğıöşü]", text.lower()):
+            return True
+
+        turkish_tokens = {
+            "gunde", "gunluk", "haftada", "haftalik", "once", "sonrasi", "aksam",
+            "sabah", "su", "uyku", "yuruyus", "esneme", "minnet", "duygu",
+            "ertesi", "gun", "plani", "odak", "egzersizi", "aliskanliklarina",
+            "onerildi", "takibi",
+        }
+        tokens = set(re.findall(r"[a-z0-9]+", normalized))
+        return bool(tokens.intersection(turkish_tokens))
 
     def _normalize_text(self, text: str) -> str:
         """Normalize text for robust keyword matching and deduplication."""

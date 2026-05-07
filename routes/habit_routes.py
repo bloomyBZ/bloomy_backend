@@ -3,9 +3,10 @@ API Routes for Habit Management
 """
 
 from functools import wraps
+from datetime import datetime
 from flask import Blueprint, request, jsonify
 from firebase_admin import auth
-from repositories.repositories import HabitRepository, StreakRepository, TrashRepository
+from repositories.repositories import HabitRepository, StreakRepository, TrashRepository, UserRepository
 from services.services import ScoringService, StreakService, AIService
 
 habit_bp = Blueprint('habits', __name__, url_prefix='/api/habits')
@@ -13,6 +14,7 @@ habit_bp = Blueprint('habits', __name__, url_prefix='/api/habits')
 habit_repo = HabitRepository()
 streak_repo = StreakRepository()
 trash_repo = TrashRepository()
+user_repo = UserRepository()
 scoring_service = ScoringService()
 streak_service = StreakService()
 ai_service = AIService()
@@ -47,8 +49,12 @@ def create_habit(uid):
         data = request.get_json()
         name = data.get('name')
         frequency = data.get('frequency', 'daily')
+        schedule = data.get('schedule', '')
+        category = data.get('category', '')
+        source = data.get('source', '')
         description = data.get('description', '')
         icon = data.get('icon', '📍')
+        is_hydration_habit = habit_repo.is_hydration_habit(name, description, icon)
 
         if not name:
             return jsonify({'error': 'Habit name is required'}), 400
@@ -57,8 +63,17 @@ def create_habit(uid):
             user_id=uid,
             name=name,
             frequency=frequency,
+            schedule=schedule,
+            category=category,
+            source=source,
             description=description,
-            icon=icon
+            icon=icon,
+            water_intake=HabitRepository.DEFAULT_WATER_CUPS
+            if is_hydration_habit
+            else 0,
+            water_date=datetime.utcnow().date().isoformat()
+            if is_hydration_habit
+            else ''
         )
 
         if habit_id:
@@ -97,6 +112,12 @@ def get_user_habits(auth_uid, uid):
     try:
         if auth_uid != uid:
             return jsonify({'error': 'Unauthorized'}), 403
+
+        user = user_repo.get_user(uid)
+        if user and not user.hydration_habit_dismissed:
+            water_habit_id = habit_repo.ensure_default_water_habit(uid)
+            if water_habit_id:
+                streak_repo.create_streak(uid, water_habit_id)
 
         habits = habit_repo.get_user_habits(uid)
         habits_data = [habit.to_dict() for habit in habits]
@@ -140,8 +161,21 @@ def update_habit(uid, habit_id):
             return jsonify({'error': 'Habit not found'}), 404
 
         data = request.get_json()
-        allowed_fields = ['name', 'frequency', 'description', 'icon']
+        allowed_fields = [
+            'name',
+            'frequency',
+            'schedule',
+            'category',
+            'description',
+            'icon',
+            'water_intake',
+        ]
         update_data = {k: v for k, v in data.items() if k in allowed_fields}
+
+        if 'water_intake' in update_data:
+            safe_cups = max(0, min(HabitRepository.WATER_GOAL, int(update_data['water_intake'])))
+            update_data['water_intake'] = safe_cups
+            update_data['water_date'] = datetime.utcnow().date().isoformat()
 
         if habit_repo.update(habit_id, update_data):
             updated_habit = habit_repo.get_habit(habit_id)
@@ -167,10 +201,14 @@ def delete_habit(uid, habit_id):
         if trash_repo.trash_habit(habit_id, habit_data):
             # Remove from active habits
             if habit_repo.delete(habit_id):
+                if habit_repo.is_hydration_habit(habit.name, habit.description, habit.icon):
+                    user_repo.set_hydration_habit_dismissed(uid, True)
+                removal_details = scoring_service.remove_habit_progress(uid, habit_id)
                 return jsonify({
                     'message': 'Habit deleted successfully',
                     'habit_id': habit_id,
-                    'undo_available': True
+                    'undo_available': True,
+                    **removal_details
                 }), 200
         
         return jsonify({'error': 'Failed to delete habit'}), 500
@@ -191,6 +229,13 @@ def undo_delete_habit(uid, habit_id):
             # Verify that the restored habit belongs to the user
             if habit_data.get('user_id') != uid:
                 return jsonify({'error': 'Unauthorized'}), 403
+
+            if habit_repo.is_hydration_habit(
+                habit_data.get('name', ''),
+                habit_data.get('description', ''),
+                habit_data.get('icon', ''),
+            ):
+                user_repo.set_hydration_habit_dismissed(uid, False)
             
             # Re-initialize streak for restored habit
             streak_repo.create_streak(uid, habit_id)
@@ -274,6 +319,28 @@ def complete_habit(uid, habit_id):
 
     except Exception as e:
         return jsonify({'error': f'Completion failed: {str(e)}'}), 500
+
+
+@habit_bp.route('/<habit_id>/uncomplete', methods=['POST'])
+@verify_token
+def uncomplete_habit(uid, habit_id):
+    """Undo today's completion and reverse points."""
+    try:
+        success, points_removed, details = scoring_service.uncomplete_habit(
+            user_id=uid,
+            habit_id=habit_id,
+        )
+
+        if success:
+            return jsonify({
+                'message': 'Habit marked as undone',
+                'points_removed': points_removed,
+                **details,
+            }), 200
+
+        return jsonify({'error': details.get('error', 'Failed to undo habit')}), 400
+    except Exception as e:
+        return jsonify({'error': f'Undo failed: {str(e)}'}), 500
 
 
 @habit_bp.route('/<habit_id>/streak', methods=['GET'])

@@ -6,13 +6,15 @@ import os
 from functools import wraps
 from flask import Blueprint, request, jsonify
 from firebase_admin import auth
-from repositories.repositories import UserRepository, PlantRepository
+from repositories.repositories import UserRepository, PlantRepository, HabitRepository, StreakRepository
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
 user_bp = Blueprint('users', __name__, url_prefix='/api/users')
 
 user_repo = UserRepository()
 plant_repo = PlantRepository()
+habit_repo = HabitRepository()
+streak_repo = StreakRepository()
 
 
 def env_bool(name: str, default: bool = False) -> bool:
@@ -69,6 +71,11 @@ def register():
 
         # Create virtual plant
         plant_repo.create_plant(user.uid)
+
+        # Give each user a fixed hydration habit by default
+        water_habit_id = habit_repo.ensure_default_water_habit(user.uid)
+        if water_habit_id:
+            streak_repo.create_streak(user.uid, water_habit_id)
 
         return jsonify({
             'message': 'User registered successfully',
@@ -220,7 +227,7 @@ def update_user(auth_uid, uid):
 
         data = request.get_json()
 
-        allowed_fields = ['display_name']
+        allowed_fields = ['display_name', 'avatar_id']
         update_data = {k: v for k, v in data.items() if k in allowed_fields}
 
         if user_repo.update(uid, update_data):
