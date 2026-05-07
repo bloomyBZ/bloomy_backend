@@ -3,6 +3,7 @@ API Routes for User Management
 """
 
 import os
+from datetime import datetime
 from functools import wraps
 from flask import Blueprint, request, jsonify
 from firebase_admin import auth
@@ -15,6 +16,7 @@ user_repo = UserRepository()
 plant_repo = PlantRepository()
 habit_repo = HabitRepository()
 streak_repo = StreakRepository()
+NOTIFICATION_TIME_OPTIONS = {'morning', 'afternoon', 'evening'}
 
 
 def env_bool(name: str, default: bool = False) -> bool:
@@ -41,6 +43,34 @@ def require_auth(f):
             return jsonify({'error': 'Invalid token'}), 401
 
     return decorated_function
+
+
+def build_notification_preferences(user):
+    """Return a stable notification settings payload for the frontend."""
+    return {
+        'notifications_enabled': getattr(user, 'notifications_enabled', True),
+        'notification_time': getattr(user, 'notification_time', 'evening'),
+        'streak_alerts_enabled': getattr(user, 'streak_alerts_enabled', True),
+        'evening_reflection_enabled': getattr(user, 'evening_reflection_enabled', False),
+    }
+
+
+def coerce_bool(value, fallback: bool = False) -> bool:
+    """Normalize common boolean representations from clients."""
+    if isinstance(value, bool):
+        return value
+
+    if isinstance(value, (int, float)):
+        return bool(value)
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {'1', 'true', 'yes', 'on'}:
+            return True
+        if normalized in {'0', 'false', 'no', 'off'}:
+            return False
+
+    return fallback
 
 # ============== Authentication Routes ==============
 
@@ -230,6 +260,9 @@ def update_user(auth_uid, uid):
         allowed_fields = ['display_name', 'avatar_id']
         update_data = {k: v for k, v in data.items() if k in allowed_fields}
 
+        if update_data:
+            update_data['updated_at'] = datetime.utcnow().isoformat()
+
         if user_repo.update(uid, update_data):
             updated_user = user_repo.get_user(uid)
             return jsonify(updated_user.to_dict()), 200
@@ -238,6 +271,78 @@ def update_user(auth_uid, uid):
 
     except Exception as e:
         return jsonify({'error': f'Update failed: {str(e)}'}), 500
+
+
+@user_bp.route('/<uid>/notifications', methods=['GET'])
+@require_auth
+def get_user_notifications(auth_uid, uid):
+    """Get notification preferences for the authenticated user."""
+    try:
+        if auth_uid != uid:
+            return jsonify({'error': 'Unauthorized'}), 403
+
+        user = user_repo.get_user(uid)
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+
+        return jsonify(build_notification_preferences(user)), 200
+
+    except Exception as e:
+        return jsonify({'error': f'Failed to fetch notifications: {str(e)}'}), 500
+
+
+@user_bp.route('/<uid>/notifications', methods=['PUT'])
+@require_auth
+def update_user_notifications(auth_uid, uid):
+    """Update notification preferences for the authenticated user."""
+    try:
+        if auth_uid != uid:
+            return jsonify({'error': 'Unauthorized'}), 403
+
+        user = user_repo.get_user(uid)
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+
+        data = request.get_json() or {}
+        update_data = {}
+
+        if 'notifications_enabled' in data:
+            update_data['notifications_enabled'] = coerce_bool(
+                data.get('notifications_enabled'),
+                getattr(user, 'notifications_enabled', True),
+            )
+
+        if 'streak_alerts_enabled' in data:
+            update_data['streak_alerts_enabled'] = coerce_bool(
+                data.get('streak_alerts_enabled'),
+                getattr(user, 'streak_alerts_enabled', True),
+            )
+
+        if 'evening_reflection_enabled' in data:
+            update_data['evening_reflection_enabled'] = coerce_bool(
+                data.get('evening_reflection_enabled'),
+                getattr(user, 'evening_reflection_enabled', False),
+            )
+
+        if 'notification_time' in data:
+            notification_time = str(data.get('notification_time', '')).strip().lower()
+            if notification_time not in NOTIFICATION_TIME_OPTIONS:
+                return jsonify({'error': 'notification_time must be morning, afternoon, or evening'}), 400
+            update_data['notification_time'] = notification_time
+
+        if not update_data:
+            return jsonify({'error': 'No valid notification fields were provided'}), 400
+
+        update_data['updated_at'] = datetime.utcnow().isoformat()
+
+        if not user_repo.update(uid, update_data):
+            return jsonify({'error': 'Failed to update notifications'}), 500
+
+        updated_user = user_repo.get_user(uid)
+        return jsonify(build_notification_preferences(updated_user)), 200
+
+    except Exception as e:
+        return jsonify({'error': f'Notification update failed: {str(e)}'}), 500
 
 
 @user_bp.route('/<uid>/stats', methods=['GET'])

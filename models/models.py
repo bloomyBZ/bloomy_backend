@@ -28,6 +28,10 @@ class User:
     display_name: str
     avatar_id: str = "sprout"
     hydration_habit_dismissed: bool = False
+    notifications_enabled: bool = True
+    notification_time: str = "evening"
+    streak_alerts_enabled: bool = True
+    evening_reflection_enabled: bool = False
     total_points: int = 0
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)

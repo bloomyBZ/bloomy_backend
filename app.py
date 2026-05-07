@@ -149,6 +149,8 @@ def api_docs():
             'Users': {
                 'GET /api/users/<uid>': 'Get user profile',
                 'PUT /api/users/<uid>': 'Update user profile',
+                'GET /api/users/<uid>/notifications': 'Get notification preferences',
+                'PUT /api/users/<uid>/notifications': 'Update notification preferences',
                 'GET /api/users/<uid>/stats': 'Get user statistics',
                 'DELETE /api/users/<uid>/delete': 'Delete user account'
             },
