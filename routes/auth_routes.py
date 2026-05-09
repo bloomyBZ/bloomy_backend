@@ -345,6 +345,58 @@ def update_user_notifications(auth_uid, uid):
         return jsonify({'error': f'Notification update failed: {str(e)}'}), 500
 
 
+@user_bp.route('/<uid>/push-token', methods=['POST'])
+@require_auth
+def add_user_push_token(auth_uid, uid):
+    """Save an Expo push token for the authenticated user's device."""
+    try:
+        if auth_uid != uid:
+            return jsonify({'error': 'Unauthorized'}), 403
+
+        data = request.get_json() or {}
+        expo_push_token = str(data.get('expo_push_token', '')).strip()
+        if not expo_push_token:
+            return jsonify({'error': 'expo_push_token is required'}), 400
+
+        updated_user = user_repo.add_expo_push_token(uid, expo_push_token)
+        if not updated_user:
+            return jsonify({'error': 'Failed to save push token'}), 500
+
+        return jsonify({
+            'message': 'Push token saved',
+            'push_token_count': len(getattr(updated_user, 'expo_push_tokens', []) or []),
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': f'Failed to save push token: {str(e)}'}), 500
+
+
+@user_bp.route('/<uid>/push-token', methods=['DELETE'])
+@require_auth
+def remove_user_push_token(auth_uid, uid):
+    """Remove an Expo push token for the authenticated user's device."""
+    try:
+        if auth_uid != uid:
+            return jsonify({'error': 'Unauthorized'}), 403
+
+        data = request.get_json() or {}
+        expo_push_token = str(data.get('expo_push_token', '')).strip()
+        if not expo_push_token:
+            return jsonify({'error': 'expo_push_token is required'}), 400
+
+        updated_user = user_repo.remove_expo_push_token(uid, expo_push_token)
+        if not updated_user:
+            return jsonify({'error': 'Failed to remove push token'}), 500
+
+        return jsonify({
+            'message': 'Push token removed',
+            'push_token_count': len(getattr(updated_user, 'expo_push_tokens', []) or []),
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': f'Failed to remove push token: {str(e)}'}), 500
+
+
 @user_bp.route('/<uid>/stats', methods=['GET'])
 @require_auth
 def get_user_stats(auth_uid, uid):

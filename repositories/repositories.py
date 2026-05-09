@@ -107,6 +107,39 @@ class UserRepository(BaseRepository):
             'updated_at': datetime.utcnow().isoformat(),
         })
 
+    def add_expo_push_token(self, uid: str, expo_push_token: str) -> Optional[User]:
+        """Add or refresh an Expo push token for a user."""
+        user = self.get_user(uid)
+        if not user:
+            return None
+
+        tokens = list(getattr(user, 'expo_push_tokens', []) or [])
+        if expo_push_token not in tokens:
+            tokens.append(expo_push_token)
+
+        if not self.update(uid, {
+            'expo_push_tokens': tokens,
+            'updated_at': datetime.utcnow().isoformat(),
+        }):
+            return None
+
+        return self.get_user(uid)
+
+    def remove_expo_push_token(self, uid: str, expo_push_token: str) -> Optional[User]:
+        """Remove an Expo push token from a user."""
+        user = self.get_user(uid)
+        if not user:
+            return None
+
+        tokens = [token for token in (getattr(user, 'expo_push_tokens', []) or []) if token != expo_push_token]
+        if not self.update(uid, {
+            'expo_push_tokens': tokens,
+            'updated_at': datetime.utcnow().isoformat(),
+        }):
+            return None
+
+        return self.get_user(uid)
+
 class HabitRepository(BaseRepository):
     """Habit database operations"""
 

@@ -11,6 +11,7 @@ from datetime import datetime
 # Import blueprints
 from routes.auth_routes import auth_bp, user_bp
 from routes.habit_routes import habit_bp
+from routes.notification_routes import notification_bp
 from routes.plant_routes import plant_bp
 
 # Initialize Flask app
@@ -61,6 +62,7 @@ CORS(app, resources={
 app.register_blueprint(auth_bp)
 app.register_blueprint(user_bp)
 app.register_blueprint(habit_bp)
+app.register_blueprint(notification_bp)
 app.register_blueprint(plant_bp)
 
 # ============== Global Routes ==============
@@ -151,8 +153,13 @@ def api_docs():
                 'PUT /api/users/<uid>': 'Update user profile',
                 'GET /api/users/<uid>/notifications': 'Get notification preferences',
                 'PUT /api/users/<uid>/notifications': 'Update notification preferences',
+                'POST /api/users/<uid>/push-token': 'Register an Expo push token',
+                'DELETE /api/users/<uid>/push-token': 'Remove an Expo push token',
                 'GET /api/users/<uid>/stats': 'Get user statistics',
                 'DELETE /api/users/<uid>/delete': 'Delete user account'
+            },
+            'Notifications': {
+                'POST /api/notifications/reminders/send': 'Send scheduled habit reminders via Expo Push API'
             },
             'Habits': {
                 'POST /api/habits': 'Create new habit',

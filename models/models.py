@@ -32,6 +32,7 @@ class User:
     notification_time: str = "evening"
     streak_alerts_enabled: bool = True
     evening_reflection_enabled: bool = False
+    expo_push_tokens: List[str] = field(default_factory=list)
     total_points: int = 0
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)

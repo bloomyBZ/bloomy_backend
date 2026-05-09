@@ -203,6 +203,20 @@ All user-specific plant endpoints require Authorization and UID ownership.
 - If CRON_SECRET is set, send header:
   - X-Cron-Secret: <secret>
 
+6. POST /api/users/<uid>/push-token
+- Purpose: register an Expo push token for a device
+- Auth: Yes
+
+7. POST /api/notifications/reminders/send
+- Purpose: send scheduled habit reminders through Expo Push API
+- Auth: Optional CRON_SECRET guard
+- Body example:
+```json
+{
+  "notification_time": "evening"
+}
+```
+
 ## 5. Frontend Integration Flow
 
 Recommended flow:
